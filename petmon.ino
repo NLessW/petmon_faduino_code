@@ -44,6 +44,7 @@ bool switchPressed = false;
 bool motorStarted = false;
 int lastSensorState = HIGH;
 bool labelCutterState = false;
+bool labelOpenTriggered = false; // 문 열기 1회 트리거 가드
 
 bool login = false;  // 로그인 상태 변수
 
@@ -89,10 +90,11 @@ void loop() {
     if(login){
         labelCutter();
     }
-    if(labelCutterState==true){
+    if(labelCutterState==true && !labelOpenTriggered){
         Serial.println("Door will opened..");
         executeOpenDoor();
-        labelCutterState=false;
+        // 문 열기는 사이클 당 1회만 수행
+        labelOpenTriggered = true;
     }
 
     // 시리얼 명령 처리
@@ -191,30 +193,40 @@ void showHelp() {
 // =========================
 void labelCutter() {
     static int lastSwitchState = LOW;  // 이전 스위치 상태 저장
-    int switchState = digitalRead(labelSwitch);
+    static int lastSensorState = HIGH; // 초기값을 HIGH로 잡아 즉시 정지 방지
+    static unsigned long motorStartTime = 0;
+    const unsigned long sensorIgnoreMs = 700; // 시작 후 200ms 동안 센서 무시
 
+    int switchState = digitalRead(labelSwitch);
+if (labelCutterState) {
+        return;
+    }
     // 스위치 상승엣지 감지: 이전 LOW, 현재 HIGH일 때만 1회 실행
     if (switchState == HIGH && lastSwitchState == LOW) {
         motorRunning = true;
         motorStarted = true;
         digitalWrite(labelMotor, HIGH);
+        motorStartTime = millis();
         Serial.println("Label motor started (login required)");
     }
 
     int currentSensorState = digitalRead(labelSensor);
 
-    // 센서 감지 시 모터 정지
-    if (motorRunning && motorStarted && lastSensorState == HIGH && currentSensorState == LOW) {
-        motorRunning = false;
-        motorStarted = false;
-        digitalWrite(labelMotor, LOW);
-        Serial.println("Label cutting done!");
-        labelCutterState = true;
+    // 모터가 시작된 상태에서, 시작 후 지정 시간 경과 후에만 센서 하강엣지로 정지
+    if (motorRunning && motorStarted) {
+        if (millis() - motorStartTime > sensorIgnoreMs) {
+            if (lastSensorState == HIGH && currentSensorState == HIGH) {
+                motorRunning = false;
+                motorStarted = false;
+                digitalWrite(labelMotor, LOW);
+                Serial.println("Label cutting done!");
+                labelCutterState = true;
+            }
+        }
     }
 
     lastSensorState = currentSensorState;
     lastSwitchState = switchState;  // 마지막에 현재 스위치 상태 저장
-    
 }
 
 void showSensorStatus() {
@@ -454,6 +466,9 @@ void executeSensor2Motor() {
     digitalWrite(in2_Pin, LOW);
     analogWrite(ena_Pin, 0);
     delay(5000);
+    // Allow next label cycle
+    labelCutterState = false;
+    labelOpenTriggered = false;
     Serial.println("24V Motor stopped.");
 }
 
